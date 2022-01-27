@@ -389,13 +389,13 @@ proc processExpr(arg, wrt: SymbolicVariable): SymbolicVariable =
     result = handlePrefix(arg, wrt)
   else: error("unsupported: " & $arg.kind & " and value " & $arg.n.treerepr)
 
-macro derivative(arg, wrt: typed): untyped =
+macro derivative*(arg, wrt: typed): untyped =
   ## computes the forward derivative of `arg` (a Nim expression)
   ## with respect to `wrt` using symbolic differentiation on the
   ## Nim AST
   result = toNimCode processExpr(toSymbolicVariable(arg), toSymbolicVariable(wrt))
 
-template ∂(arg, wrt: untyped): untyped =
+template ∂*(arg, wrt: untyped): untyped =
   derivative(arg, wrt)
 
 macro genHelpers(): untyped =
@@ -419,7 +419,7 @@ macro genHelpers(): untyped =
         body = quote do:
           ∂(`body`, `wrt`)
     result.add quote do:
-      template `name`(`arg`, `wrt`: untyped): untyped =
+      template `name`*(`arg`, `wrt`: untyped): untyped =
         `body`
 
 genHelpers()
