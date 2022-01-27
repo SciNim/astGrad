@@ -5,6 +5,7 @@ type
     skPlus, skMinus, skMul, skDiv, skPower, skInvalid
   SymbolicVariable = object
     n: NimNode # the corresponding nim node
+    id: uint64 # unique identifier (mainly for debugging)
     processed: bool # indicates whether derivative has already been computed for this variable
   SymbolicParameter = object
     n: NimNode
@@ -22,13 +23,10 @@ macro defineSupportedFunctions(body: untyped): untyped =
     doAssert fn.kind == nnkInfix and fn[0].strVal == "->"
     let fnName = fn[1].strVal
     let fnId = ident(fnName)
-    #echo fn[2].treerepr
     FunctionTab[fnName] = fnId
     DerivativeTab[fnName] = SymbolicFunction(n: fn[2], processed: true)
-  #for k, v in FunctionTab:
-  #  echo "Fn ", k.repr
-  #  echo "Deriv ", DerivativeTab[k].repr
 
+## NOTE: some of the following functions are not implemented in Nim atm
 defineSupportedFunctions:
   sqrt        ->  1.0 / 2.0 / sqrt(x)
   cbrt        ->  1.0 / 3.0 / (cbrt(x)^2.0)
@@ -100,6 +98,21 @@ defineSupportedFunctions:
   erfcx       ->  (2.0 * x * erfcx(x) - 2.0 / sqrt(Pi))
   dawson      ->  (1.0 - 2.0 * x * dawson(x))
 
+when false:
+  import hashes
+  proc hash(x: SymbolicVariable): Hash =
+    result = result !& hash(x.n.repr)
+    result = result !& hash(x.id)
+    result = result !& hash(x.processed)
+    result = !$ result
+
+  import sets
+  var NodeSet {.compileTime.} = initHashSet[SymbolicVariable]()
+
+var IDCounter {.compileTime.} = 0'u64
+template getID(): untyped =
+  inc IDCounter
+  IDCounter
 
 proc evaluateFunction(fn: SymbolicFunction, arg: SymbolicVariable): SymbolicVariable =
   ## inserts the symbolic variable into the `x` fields and returns a new variable
@@ -119,11 +132,30 @@ proc evaluateFunction(fn: SymbolicFunction, arg: SymbolicVariable): SymbolicVari
         for ch in n:
           result.add insert(ch, arg)
   let repl = tree.insert(arg.n)
-  result = SymbolicVariable(n: repl, processed: true)
+  result = SymbolicVariable(n: repl, processed: true, id: getID())
 
 proc isNumber(n: NimNode): bool =
   # maybe this: ?
-  n.typeKind in {ntyInt .. ntyUInt64}
+  (n.kind != nnkSym and n.typeKind in {ntyInt .. ntyUInt64}) or
+  n.kind in {nnkIntLit .. nnkFloat128Lit}
+
+proc isNumberLit(n: NimNode): bool =
+  # maybe this: ?
+  n.kind in {nnkIntLit .. nnkFloat128Lit}
+
+proc isNumber(x: SymbolicVariable): bool = x.n.isNumber
+proc kind(x: SymbolicVariable): NimNodeKind = x.n.kind
+proc `[]`(x: SymbolicVariable, idx: int): SymbolicVariable =
+  result = SymbolicVariable(n: x.n[idx], processed: x.processed, id: x.id)
+
+iterator items(x: SymbolicVariable): SymbolicVariable =
+  for i in 0 ..< x.n.len:
+    yield x[i]
+
+proc add(x: var SymbolicVariable, y: SymbolicVariable) =
+  var n = x.n
+  n.add y.n
+  x = SymbolicVariable(n: n, processed: x.processed, id: x.id)
 
 proc isZero(x: SymbolicVariable): bool = x.n.kind in {nnkFloatLit, nnkFloat64Lit} and x.n.floatVal == 0.0
 proc isOne(x: SymbolicVariable): bool = x.n.kind in {nnkFloatLit, nnkFloat64Lit} and x.n.floatVal == 1.0
@@ -132,32 +164,41 @@ proc name(fn: SymbolicFunction): string = result = fn.n.strVal
 
 proc toSymbolicVariable(n: NimNode, processed = false): SymbolicVariable =
   #doAssert n.kind in {nnkIdent, nnkSym, nnkIntLit .. nnkFloat128Lit}
-  result = SymbolicVariable(n: n, processed: processed)
+  result = SymbolicVariable(n: n, processed: processed, id: getID())
 
 proc symbolicOne(): SymbolicVariable =
-  SymbolicVariable(n: newLit(1.0), processed: true)
+  SymbolicVariable(n: newLit(1.0), processed: true, id: getID())
 
 proc symbolicZero(): SymbolicVariable =
-  SymbolicVariable(n: newLit(0.0), processed: true)
+  SymbolicVariable(n: newLit(0.0), processed: true, id: getID())
 
 proc symbolicPower(): SymbolicParameter =
   SymbolicParameter(n: ident"^", kind: skPower)
 
 proc `==`(a, b: SymbolicVariable): bool =
-  result = a.n == b.n
+  result = a.n == b.n and a.id == b.id
+
+proc isIndep(a, indep: SymbolicVariable): bool =
+  ## checks whether `a` is the independent variable
+  result = a.n == indep.n
 
 ## TODO: simplify these such that if the second arg is identity element, not included
 proc `-`(n: SymbolicVariable): SymbolicVariable =
-  result = SymbolicVariable(n: nnkCall.newTree(ident"-", n.n), processed: true)
+  result = SymbolicVariable(n: nnkPrefix.newTree(ident"-", n.n), processed: true, id: getID())
 
 proc setProcessed(x: SymbolicVariable): SymbolicVariable =
   result = x
   result.processed = true # most likely already true
 
+proc san(n: NimNode): NimNode =
+  case n.kind
+  of nnkHiddenStdConv: result = n[1]
+  else: result = n
+
 proc `+`(x, y: SymbolicVariable): SymbolicVariable =
   if x.isZero: result = y.setProcessed
   elif y.isZero: result = x.setProcessed
-  else: result = SymbolicVariable(n: nnkInfix.newTree(ident"+", x.n, y.n), processed: true)
+  else: result = SymbolicVariable(n: nnkInfix.newTree(ident"+", x.n.san, y.n.san), processed: true, id: getID())
 
 proc litDiff(x, y: NimNode): NimNode =
   if x.kind == y.kind:
@@ -176,9 +217,9 @@ proc `-`(x, y: SymbolicVariable): SymbolicVariable =
   if x.isZero: result = -y.setProcessed
   elif y.isZero: result = x.setProcessed
   elif x == y: result = symbolicZero()
-  elif x.n.isNumber and y.n.isNumber: # compute result in place
-    result = SymbolicVariable(n: litDiff(x.n, y.n), processed: true)
-  else: result = SymbolicVariable(n: nnkInfix.newTree(ident"-", x.n, y.n), processed: true)
+  elif x.n.isNumberLit and y.n.isNumberLit: # compute result in place
+    result = SymbolicVariable(n: litDiff(x.n, y.n), processed: true, id: getID())
+  else: result = SymbolicVariable(n: nnkInfix.newTree(ident"-", x.n.san, y.n.san), processed: true, id: getID())
 
 proc `-`(x: SymbolicVariable, y: SomeNumber): SymbolicVariable =
   result = x - toSymbolicVariable(newLit(y), true)
@@ -188,7 +229,8 @@ proc `*`(x, y: SymbolicVariable): SymbolicVariable =
   elif y.isOne: result = x.setProcessed
   elif x.isZero: result = symbolicZero()
   elif y.isZero: result = symbolicZero()
-  else: result = SymbolicVariable(n: nnkInfix.newTree(ident"*", x.n, y.n), processed: true)
+  else:
+    result = SymbolicVariable(n: nnkInfix.newTree(ident"*", x.n.san, y.n.san), processed: true, id: getID())
 
 proc `/`(x, y: SymbolicVariable): SymbolicVariable =
   # if x is one, default is shortest already
@@ -196,7 +238,7 @@ proc `/`(x, y: SymbolicVariable): SymbolicVariable =
   elif x.isZero: result = symbolicZero()
   elif y.isOne: result = x.setProcessed
   elif x == y: result = symbolicOne()
-  else: result = SymbolicVariable(n: nnkInfix.newTree(ident"/", x.n, y.n), processed: true)
+  else: result = SymbolicVariable(n: nnkInfix.newTree(ident"/", x.n.san, y.n.san), processed: true, id: getID())
 
 proc `^`(x, y: SymbolicVariable): SymbolicVariable =
   # if x is one, default is shortest already
@@ -204,23 +246,24 @@ proc `^`(x, y: SymbolicVariable): SymbolicVariable =
   if y.isOne: result = x.setProcessed
   elif y.isZero: result = symbolicOne()
   elif x.isZero: result = symbolicZero()
-  else: result = SymbolicVariable(n: nnkCall.newTree(ident"pow", x.n, y.n), processed: true)
+  else: result = SymbolicVariable(n: nnkCall.newTree(ident"pow", x.n.san, y.n.san), processed: true, id: getID())
 
 proc log(x: SymbolicVariable): SymbolicVariable =
   if x.isZero: error("Computation yields log(0) and thus -Inf!")
-  else: result = SymbolicVariable(n: nnkCall.newTree(ident"log", x.n), processed: true)
+  else: result = SymbolicVariable(n: nnkCall.newTree(ident"log", x.n.san), processed: true, id: getID())
+
+proc processExpr(arg, wrt: SymbolicVariable): SymbolicVariable
 
 proc differentiate(x, wrt: SymbolicVariable): SymbolicVariable =
   if x.processed:
     result = x
   else:
-    if x == wrt: result = symbolicOne()
-    else: result = symbolicZero()
-  echo "differentiate: ", result.n.repr, " of args ", x.n.repr, " and ", wrt.n.repr
+    result = processExpr(x, wrt)
+  doAssert result.processed
+  result = result.setProcessed
 
 proc diffPlus(x, y, wrt: SymbolicVariable): SymbolicVariable =
   # compute gradient of `x + y` w.r.t. `wrt`
-  echo "diffPlus of ", x.repr, " and ", y.repr, " wrt ", wrt.repr
   result = differentiate(x, wrt) + differentiate(y, wrt)
 
 proc diffMinus(x, y, wrt: SymbolicVariable): SymbolicVariable =
@@ -236,21 +279,13 @@ proc diffDiv(x, y, wrt: SymbolicVariable): SymbolicVariable =
   result = differentiate(x, wrt) / y + (-x * differentiate(y, wrt) / (y * y))
 
 proc diffPower(x, y, wrt: SymbolicVariable): SymbolicVariable =
-  # compute gradient of `x + y` w.r.t. `wrt`
-  echo "In diff power : "
-  echo "x ", x.n.repr
-  echo "y ", y.n.repr
-  echo "wrt ", wrt.n.repr
+  # compute gradient of `x ^ y` w.r.t. `wrt`
   let xp = differentiate(x, wrt)
   let yp = differentiate(y, wrt)
-  echo "xp ", xp.n.repr, " is zero ? ", xp.isZero
-  echo "yp ", yp.n.repr, " is zero ? ", yp.isZero
   if xp.isZero and yp.isZero:
     result = symbolicZero()
   elif yp.isZero:
-    echo "y is zero!"
     result = y * xp  * (x ^ (y - 1.0))
-    echo "result ?? ", result.n.repr
   else:
     result = x ^ y * (xp * y / x + yp * log(x))
 
@@ -268,171 +303,212 @@ proc differentiate(op: SymbolicParameter,
 proc differentiate(fn: SymbolicFunction, arg: SymbolicVariable): SymbolicVariable =
   result = evaluateFunction(DerivativeTab[fn.name], arg)
 
-proc parseSymbolicParameter(n: NimNode): SymbolicParameter =
-  doAssert n.kind in {nnkIdent, nnkSym}
-  case n.strVal
-  of "+": result = SymbolicParameter(n: n, kind: skPlus)
-  of "-": result = SymbolicParameter(n: n, kind: skMinus)
-  of "*": result = SymbolicParameter(n: n, kind: skMul)
-  of "/": result = SymbolicParameter(n: n, kind: skDiv)
-  of "^", "**": result = SymbolicParameter(n: n, kind: skPower)
+proc parseSymbolicParameter(x: SymbolicVariable): SymbolicParameter =
+  doAssert x.kind in {nnkIdent, nnkSym}
+  case x.n.strVal
+  of "+": result = SymbolicParameter(n: x.n, kind: skPlus)
+  of "-": result = SymbolicParameter(n: x.n, kind: skMinus)
+  of "*": result = SymbolicParameter(n: x.n, kind: skMul)
+  of "/": result = SymbolicParameter(n: x.n, kind: skDiv)
+  of "^", "**": result = SymbolicParameter(n: x.n, kind: skPower)
   else: result = SymbolicParameter(n: newEmptyNode(), kind: skInvalid)
 
-proc parseSymbolicFunction(n: NimNode): SymbolicFunction =
-  doAssert n.kind in {nnkIdent, nnkSym}
-  result = SymbolicFunction(n: FunctionTab[n.strVal])
+proc parseSymbolicFunction(x: SymbolicVariable): SymbolicFunction =
+  doAssert x.kind in {nnkIdent, nnkSym}
+  result = SymbolicFunction(n: FunctionTab[x.n.strVal])
 
-proc toNimCode(x: SymbolicVariable): NimNode = x.n
+proc toNimCode(x: SymbolicVariable): NimNode =
+  ## Converts the symbolic back into nim code. Just means we return the
+  ## NimNode it contains. However, in the future we will add some simple
+  ## simplification to act against code explosion.
+  x.n
 
-proc processExpr(arg, wrt: NimNode): SymbolicVariable
-proc handleInfix(arg, wrt: NimNode): SymbolicVariable =
-  echo "In INFIX with: ", arg.repr
+proc handleInfix(arg, wrt: SymbolicVariable): SymbolicVariable =
+  ## handle infix nodes by calling the correct differentiation function
   doAssert arg.kind == nnkInfix
   let symbol = parseSymbolicParameter(arg[0])
-  let ch1 = toSymbolicVariable(arg[1])#processExpr(arg[1], wrt)
-  let ch2 = toSymbolicVariable(arg[1])#processExpr(arg[2], wrt)
-  echo "Ch1 ", ch1.repr, " and ch2 ", ch2.repr
-  result = differentiate(symbol, ch1, ch2, toSymbolicVariable wrt)
-  echo "infix result ", result.n.repr
+  result = differentiate(symbol, arg[1], arg[2],
+                         wrt)
 
-proc handleCall(arg, wrt: NimNode): SymbolicVariable =
-  ## handle chain rule
-  doAssert arg.kind == nnkCall, " is : " & $arg.treerepr
+proc handleCall(arg, wrt: SymbolicVariable): SymbolicVariable =
+  ## Essentially handle the chain rule of function calls (and `pow` calls)
+  doAssert arg.kind == nnkCall, " is : " & $arg.n.treerepr
   # check if call might be an `infix` symbol. If so, patch up and call infix instead
   if arg[0].parseSymbolicParameter().kind != skInvalid:
-    var inf = nnkInfix.newTree()
+    ## XXX: this can go I think. It was due to a bug
+    doAssert not arg.processed
+    var inf = SymbolicVariable(n: nnkInfix.newTree(), processed: arg.processed, id: getID())
     for ch in arg:
       inf.add ch
     result = handleInfix(inf, wrt)
   else:
     # regular function call
-    #doAssert arg.len == 2, "Only single argument functions supported for now! Was: " & $arg.treerepr
     # for now assume single argument functions, i.e. we can evaluate the argument
     # as an expression and there is only one argument
-    if arg[0].strVal == "pow":
+    if arg[0].n.strVal == "pow":
       # power is special case, as it's the only 2 arg function we support so far
-      let ch1 = processExpr(arg[1], wrt)
-      let ch2 = processExpr(arg[2], wrt)
-      result = differentiate(symbolicPower(), ch1, ch2, toSymbolicVariable wrt)
+      result = differentiate(symbolicPower(), arg[1], arg[2], wrt)
     else:
       let fn = parseSymbolicFunction(arg[0])
-      let arg = processExpr(arg[1], wrt) # `processExpr` performs the derivative for us
-      result = differentiate(arg, toSymbolicVariable wrt) * differentiate(fn, arg) # chain rule: outer * inner
+      result = differentiate(arg[1], wrt) * differentiate(fn, arg[1]) # chain rule: outer * inner
 
-proc handlePrefix(arg, wrt: NimNode): SymbolicVariable =
+proc handlePrefix(arg, wrt: SymbolicVariable): SymbolicVariable =
   ## handle prefix, usually `-` or `+`
-  expectKind(arg, nnkPrefix)
+  expectKind(arg.n, nnkPrefix)
   # parse the prefix symbol
   let fn = parseSymbolicParameter(arg[0])
   case fn.kind
   of skPlus, skMinus:
-    let ch1 = processExpr(arg[1], wrt)
-    result = differentiate(fn, ch1,
-                           symbolicZero(), # `-` or `+` zero is identity,
-                           toSymbolicVariable wrt)
+    # prefix is nothing to be handled via differentiation. Merge it into the element thats after
+    result = differentiate(fn, symbolicZero(), # just add / subtract from a zero
+                           arg[1],
+                           wrt)
   else:
     error("Invalid prefix: " & $fn.n.repr & " from argument: " & $arg.repr)
 
-proc processExpr(arg, wrt: NimNode): SymbolicVariable =
+proc processExpr(arg, wrt: SymbolicVariable): SymbolicVariable =
+  ## The heart of the logic. Handles the different nim nodes and performs
+  ## the actual differentiation if we are looking at a `nnkSym` or literal
   case arg.kind
   of nnkSym, nnkIntLit .. nnkFloat128Lit:
-    if arg.isNumber: result = toSymbolicVariable(arg)
+    if arg.isIndep(wrt):
+      result = symbolicOne()
     else:
-      # need to check if it's a call, not supported yet
-      error("Not supported! " & $arg.typeKind & " of node: " & $arg.repr)
+      result = symbolicZero()
   of nnkInfix:
     result = handleInfix(arg, wrt)
   of nnkCall:
     result = handleCall(arg, wrt)
   of nnkHiddenStdConv:
     # assume contains literals?
-    if arg.isNumber or arg.typeKind == ntyRange:
+    if arg.isNumber or arg.n.typeKind == ntyRange:
       result = processExpr(arg[1], wrt)
     else:
-      error("unsupported: " & $arg.kind & " and value " & $arg.treerepr)
+      error("unsupported: " & $arg.kind & " and value " & $arg.n.treerepr)
   of nnkPrefix:
     result = handlePrefix(arg, wrt)
-  else: error("unsupported: " & $arg.kind & " and value " & $arg.treerepr)
-  echo "Arg: ", arg.repr, " of kind ", arg.kind, " produced ", result.n.repr, " for ", wrt.repr
+  else: error("unsupported: " & $arg.kind & " and value " & $arg.n.treerepr)
 
 macro derivative(arg, wrt: typed): untyped =
   ## computes the forward derivative of `arg` (a Nim expression)
-  ## with respect to `wrt`
-  #echo "ARGUMENT ", arg.treerepr
-  #doAssert arg.kind == nnkInfix
-  # for now only support pure infix
-  # TODO: handle calls, command
-  result = toNimCode processExpr(arg, wrt)
-  echo result.treerepr
-  echo "∂ result\n\n", result.repr
+  ## with respect to `wrt` using symbolic differentiation on the
+  ## Nim AST
+  result = toNimCode processExpr(toSymbolicVariable(arg), toSymbolicVariable(wrt))
 
 template ∂(arg, wrt: untyped): untyped =
   derivative(arg, wrt)
 
+macro genHelpers(): untyped =
+  ## Generate higher order derivative helpers.
+  ##
+  ## NOTE:
+  ## It is really unwise to use the higher orders on functions that
+  ## get larger after each derivative... :)
+  let idx = ["²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"]
+  result = newStmtList()
+  let arg = ident"arg"
+  let wrt = ident"wrt"
+  for i, el in idx:
+    let name = ident("∂" & $el)
+    var body = newStmtList()
+    for j in 0 ..< i + 2:
+      if j == 0:
+        body = quote do:
+          ∂(`arg`, `wrt`)
+      else:
+        body = quote do:
+          ∂(`body`, `wrt`)
+    result.add quote do:
+      template `name`(`arg`, `wrt`: untyped): untyped =
+        `body`
 
-let x = 2.5
-#let y = 5.0
-#
-#echo derivative(exp(x), x)
-#template printAndCheck(arg, eq: untyped): untyped =
-#  echo "is ", derivative(arg, x), " should be ", eq
-#  echo derivative(arg, x), " is ", abs(derivative(arg, x) - eq) < 1e-4
-#
-#printAndCheck(exp(x), exp(x))
-#printAndCheck(sin(x), cos(x))
-#printAndCheck(cos(x), -sin(x))
-#printAndCheck(tanh(x), sech(x)*sech(x))
-#
-#import ggplotnim, sequtils
-#
-#proc grad(x, y: float): float =
-#  result = derivative(x*y + y*y*y, y)
-#
-#let xs = linspace(-5.0,5.0,1000)
-#let ys = xs.mapIt(grad(x, it))
-#ggplot(seqsToDf(xs, ys), aes("xs", "ys")) +
-#  geom_line() + ggsave("/tmp/deriv.pdf")
+genHelpers()
+
+when isMainModule:
+  let x = 2.5
+  echo ∂(x, x)
+
+  template printAndCheck(arg, eq: untyped): untyped =
+    echo "is ", derivative(arg, x), " should be ", eq
+    echo derivative(arg, x), " is ", abs(derivative(arg, x) - eq) < 1e-4
+
+  printAndCheck(exp(x), exp(x))
+  printAndCheck(sin(x), cos(x))
+  printAndCheck(cos(x), -sin(x))
+  printAndCheck(tanh(x), sech(x)*sech(x))
+
+  import ggplotnim, sequtils
+  #
+  #proc grad(x, y: float): float =
+  #  #result = derivative(x*y + y*y*y, y)
+  #  result = ∂(-2 * (sech(x) ^ 2) * (sech(x) ^ 2) + -2 * tanh(x) * (2 * (-tanh(x) * sech(x)) * pow(sech(x), 2 - 1.0'f64)), x)
+
+  let xs = linspace(-5.0,5.0,1000)
+
+  #echo ∂(∂(tanh(x), x), x)
+  #let ys = xs.mapIt(grad(it, it))
+  #ggplot(seqsToDf(xs, ys), aes("xs", "ys")) +
+  #  geom_line() + ggsave("/tmp/deriv.pdf")
 
 
-#(sech(it) ^ 2 * (-tanh(it) * sech(it)) + sech(it) ^ 2 * (-tanh(it) * sech(it))) *
-#  pow(sech(it) ^ 2 * (-tanh(it) * sech(it)) +
-#      sech(it) ^ 2 * (-tanh(it) * sech(it)), 0.0)
+  #echo ∂(tanh(x), x)
+  #echo ∂(sech(x)*sech(x), x)
+  #echo ∂(-2 * sech(x) ^ 2 * sech(x) ^ 2 - 2 * tanh(x) * (2 * (-tanh(x) * sech(x)) * pow(sech(x), 2 - 1.0'f64)), x)
 
 
-echo ∂(sech(x)*sech(x), x)
-#var df = newDataFrame()
-#block MultiGrad:
-#
-#  block NoGrad:
-#    let ys = xs.mapIt(tanh(it))
-#    let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 0})
-#    echo dfLoc
-#    df.add dfLoc
-#  block Grad1:
-#    let ys = xs.mapIt(∂(tanh(it), it))
-#    let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 1})
-#    df.add dfLoc
-#  block Grad2:
-#    let ys = ∂(∂(tanh(x), x), x)
-#    let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 2})
-#    df.add dfLoc
-#  #block Grad3:
-#  #  let ys = xs.mapIt(∂(∂(∂(tanh(it), it), it), it))
-#  #  let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 3})
-#  #  df.add dfLoc
-#  #block Grad4:
-#  #  let ys = xs.mapIt(∂(∂(∂(∂(tanh(it), it), it), it), it))
-#  #  let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 4})
-#  #  df.add dfLoc
-#  #block Grad5:
-#  #  let ys = xs.mapIt(∂(∂(∂(∂(∂(tanh(it), it), it), it), it), it))
-#  #  let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 5})
-#  #  df.add dfLoc
-#  #block Grad5:
-#  #  let ys = xs.mapIt(∂(∂(∂(∂(∂(∂(tanh(it), it), it), it), it), it), it))
-#  #  let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 6})
-#  #  df.add dfLoc
-#
-#  ggplot(df, aes("x", "y", color = "grad")) +
-#    geom_line() +
-#    ggsave("/tmp/tanh_derivs.pdf")
+  #echo ∂(-2*tanh(x) * sech(x)^2, x)
+  #echo ∂(sin(x) * cos(x) + pow(tanh(x), 2.0 - 1.0'f64), x)
+
+
+  #echo ∂(4*tanh(x)^2 * sech(x)^2 - 2*sech(x)^4, x)
+  #echo ∂(tanh(x), x)
+  #echo ∂(∂(tanh(x), x), x)
+  #echo ∂(∂(∂(tanh(x), x), x), x)
+  #echo ∂(∂(∂(∂(tanh(x), x), x), x), x)
+  var df = newDataFrame()
+  block MultiGrad:
+
+    block NoGrad:
+      let ys = xs.mapIt(tanh(it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 0})
+      echo dfLoc
+      df.add dfLoc
+    block Grad1:
+      let ys = xs.mapIt(∂(tanh(it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 1})
+      df.add dfLoc
+    block Grad2:
+      let ys = xs.mapIt(∂(∂(tanh(it), it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 2})
+      df.add dfLoc
+    block Grad3:
+      let ys = xs.mapIt(∂(∂(∂(tanh(it), it), it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 3})
+      df.add dfLoc
+    block Grad4:
+      let ys = xs.mapIt(∂(∂(∂(∂(tanh(it), it), it), it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 4})
+      df.add dfLoc
+    block Grad5:
+      let ys = xs.mapIt(∂(∂(∂(∂(∂(tanh(it), it), it), it), it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 5})
+      df.add dfLoc
+    block Grad6:
+      let ys = xs.mapIt(∂(∂(∂(∂(∂(∂(tanh(it), it), it), it), it), it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 6})
+      df.add dfLoc
+    block Grad7:
+      let ys = xs.mapIt(∂⁷(tanh(it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 7})
+      df.add dfLoc
+    block Grad8:
+      let ys = xs.mapIt(∂⁸(tanh(it), it))
+      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 8})
+      df.add dfLoc
+
+
+    ggplot(df, aes("x", "y", color = "grad")) +
+      geom_line() +
+      ggsave("/tmp/tanh_derivs.pdf")
+
+  echo ∂(exp(-((x - 5.0)^2) / (2 * 33.3)), x)
