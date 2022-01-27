@@ -497,18 +497,15 @@ when isMainModule:
       let ys = xs.mapIt(∂(∂(∂(∂(∂(∂(tanh(it), it), it), it), it), it), it))
       let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 6})
       df.add dfLoc
-    block Grad7:
-      let ys = xs.mapIt(∂⁷(tanh(it), it))
-      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 7})
-      df.add dfLoc
-    block Grad8:
-      let ys = xs.mapIt(∂⁸(tanh(it), it))
-      let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 8})
-      df.add dfLoc
-
+    #block Grad7:
+    #  let ys = xs.mapIt(∂⁷(tanh(it), it))
+    #  let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 7})
+    #  df.add dfLoc
+    #block Grad8:
+    #  let ys = xs.mapIt(∂⁸(tanh(it), it))
+    #  let dfLoc = seqsToDf({"x" : xs, "y" : ys, "grad" : 8})
+    #  df.add dfLoc
 
     ggplot(df, aes("x", "y", color = "grad")) +
       geom_line() +
       ggsave("/tmp/tanh_derivs.pdf")
-
-  echo ∂(exp(-((x - 5.0)^2) / (2 * 33.3)), x)
