@@ -1,0 +1,20 @@
+* astGrad - Symbolic differentiation based on the Nim AST
+
+*NOTE*: This name *really* is not final.... :P
+
+This library performs symbolic differentiation based on the nodes of
+the Nim AST. This allows for compile time generation of derivatives to
+avoid approximations due to numerical methods.
+
+Note: as this is dealing with symbolic differentiation and the code
+isn't extremely smart about doing simplification yet, the resulting
+function can become relatively large on higher orders.
+For example the 8th derivative of =tanh(x)= produces about ~7000 lines
+of code...
+
+For lower orders it works perfectly fine though and as the additional
+code generation is exponential in nature, even something like the 5th
+order is still reasonable in case of =tanh= (O(70) lines).
+
+Some simple simplification (of same addition / subtraction terms,
+multiplication / division) should help a lot.
