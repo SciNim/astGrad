@@ -18,3 +18,55 @@ order is still reasonable in case of =tanh= (O(70) lines).
 
 Some simple simplification (of same addition / subtraction terms,
 multiplication / division) should help a lot.
+
+** Usage
+
+Using this library is pretty straightforward. There is essentially
+only a single public macro:
+#+begin_src nim
+macro derivative(arg, wrt: untyped): untyped
+#+end_src
+
+This macro takes a Nim expression and a symbol to differentiate by.
+
+For example:
+#+begin_src nim
+echo derivative(x * x, x) == 2 * x
+echo derivative(x * y, y) == x
+echo derivative(exp(x), x) == exp(x)
+echo derivative(sin(x) * cos(μ)^2 + exp(-((x - μ)^2) / (2 * σ^2)), μ)
+#...
+#+end_src
+you get the idea.
+Of course every symbol used in the expression for which the derivative
+is to be computed must exist in the Nim code (otherwise you get
+"undeclared identifier" errors after the macro computed your gradient).
+
+In addition there is a helper template:
+#+begin_src nim
+template ∂(arg, wrt: untyped): untyped
+#+end_src
+to make the code a bit more pretty. In addition to this template
+higher order versions are defined using superscript unicode,
+e.g. =∂²=, =∂³= etc.
+
+Feel free to wrap the call in a procedure to generate the full
+gradient procedure:
+#+begin_src nim
+proc gradSin(x: float): float =
+  result = ∂(sin(x), x)
+
+doAssert gradSin(-Pi) == cos(-Pi)
+doAssert gradSin(0.0) == cos(0.0)
+doAssert gradSin(Pi/2.0) == cos(Pi/2.0)
+#+end_src
+
+Feel free to go crazy on your derivatives.
+
+Note: the library currently has no introspection functionality to
+compute derivatives of user defined functions. For a purely
+mathematical procedure it should be rather straight forward. More
+complex statements are not really the goal of this library. Its aim is
+to provide a convenient way to generate gradients of functions that a)
+one is too lazy to write down or b) that might already be a bit
+annoying to compute by hand.
