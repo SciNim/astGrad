@@ -179,21 +179,24 @@ proc `==`(a, b: SymbolicVariable): bool =
   result = a.n == b.n and a.id == b.id
 
 proc isIndep(a, indep: SymbolicVariable): bool =
-  ## checks whether `a` is the independent variable
+  ## checks whether `a` is the independent variable.
   result = a.n == indep.n
+
+# not required anymore, we untype the tree
+proc san(n: NimNode): NimNode {.inline.} = n
+#  case n.kind
+#  of nnkStmtListExpr: result = n[1].san
+#  of nnkHiddenStdConv, nnkConv: result = n[1].san
+#  else: result = n
 
 ## TODO: simplify these such that if the second arg is identity element, not included
 proc `-`(n: SymbolicVariable): SymbolicVariable =
-  result = SymbolicVariable(n: nnkPrefix.newTree(ident"-", n.n), processed: true, id: getID())
+  result = SymbolicVariable(n: nnkPrefix.newTree(ident"-", n.n.san), processed: true, id: getID())
 
 proc setProcessed(x: SymbolicVariable): SymbolicVariable =
   result = x
+  result.n = result.n.san # make sure to sanitize as well
   result.processed = true # most likely already true
-
-proc san(n: NimNode): NimNode =
-  case n.kind
-  of nnkHiddenStdConv: result = n[1]
-  else: result = n
 
 proc `+`(x, y: SymbolicVariable): SymbolicVariable =
   if x.isZero: result = y.setProcessed
@@ -336,6 +339,7 @@ proc handleCall(arg, wrt: SymbolicVariable): SymbolicVariable =
   # check if call might be an `infix` symbol. If so, patch up and call infix instead
   if arg[0].parseSymbolicParameter().kind != skInvalid:
     ## XXX: this can go I think. It was due to a bug
+    error("invalid")
     doAssert not arg.processed
     var inf = SymbolicVariable(n: nnkInfix.newTree(), processed: arg.processed, id: getID())
     for ch in arg:
@@ -370,7 +374,7 @@ proc processExpr(arg, wrt: SymbolicVariable): SymbolicVariable =
   ## The heart of the logic. Handles the different nim nodes and performs
   ## the actual differentiation if we are looking at a `nnkSym` or literal
   case arg.kind
-  of nnkSym, nnkIntLit .. nnkFloat128Lit:
+  of nnkSym, nnkIdent, nnkIntLit .. nnkFloat128Lit:
     if arg.isIndep(wrt):
       result = symbolicOne()
     else:
@@ -387,13 +391,39 @@ proc processExpr(arg, wrt: SymbolicVariable): SymbolicVariable =
       error("unsupported: " & $arg.kind & " and value " & $arg.n.treerepr)
   of nnkPrefix:
     result = handlePrefix(arg, wrt)
+  of nnkStmtListExpr:
+    doAssert false, "Not required anymore, we untype the tree"
+    doAssert arg[0].kind == nnkEmpty
+    result = processExpr(arg[1], wrt)
+  of nnkConv:
+    doAssert false, "Not required anymore, we untype the tree"
+    result = processExpr(arg[1], wrt)
   else: error("unsupported: " & $arg.kind & " and value " & $arg.n.treerepr)
+
+proc sanitizeInput(n: NimNode): NimNode =
+  # remove all `nnkConv, nnkHiddenStdConv and nnkStmtListExpr`
+  let tree = n
+  proc sanitize(n: NimNode): NimNode =
+    if n.len == 0:
+      case n.kind
+      of nnkSym: result = ident(n.strVal)
+      else: result = n
+    else:
+      case n.kind
+      of nnkConv, nnkHiddenStdConv: result = n[1].sanitize
+      of nnkStmtListExpr: result = n[1].sanitize
+      else:
+        result = newTree(n.kind)
+        for ch in n:
+          result.add sanitize(ch)
+  result = tree.sanitize()
 
 macro derivative*(arg, wrt: typed): untyped =
   ## computes the forward derivative of `arg` (a Nim expression)
   ## with respect to `wrt` using symbolic differentiation on the
   ## Nim AST
-  result = toNimCode processExpr(toSymbolicVariable(arg), toSymbolicVariable(wrt))
+  let input = arg.sanitizeInput
+  result = toNimCode processExpr(toSymbolicVariable(input), toSymbolicVariable(wrt.sanitizeInput))
 
 template ∂*(arg, wrt: untyped): untyped =
   derivative(arg, wrt)
@@ -436,6 +466,7 @@ when isMainModule:
   printAndCheck(sin(x), cos(x))
   printAndCheck(cos(x), -sin(x))
   printAndCheck(tanh(x), sech(x)*sech(x))
+
 
   import ggplotnim, sequtils
   #
