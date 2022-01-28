@@ -550,3 +550,10 @@ when isMainModule:
   echo "Speed after ", 1.s, ": ", f(1.0.s, 9.81.m•s⁻²)
   echo "Speed after ", 2.s, ": ", f(2.0.s, 9.81.m•s⁻²)
   echo "Speed after ", 2.s, ": ", f(3.0.s, 9.81.m•s⁻²)
+
+  import measuremancer
+  # And guess what if you have some measurement errors on top of your
+  # measurement?
+  echo "Speed after ", 1.s, ": ", f(1.0.s ± 0.05.s, 9.81.m•s⁻² ± 0.03.m•s⁻²)
+  echo "Speed after ", 2.s, ": ", f(2.0.s ± 0.05.s, 9.81.m•s⁻² ± 0.03.m•s⁻²)
+  echo "Speed after ", 2.s, ": ", f(3.0.s ± 0.05.s, 9.81.m•s⁻² ± 0.03.m•s⁻²)

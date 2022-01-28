@@ -90,3 +90,21 @@ echo "Speed after ", 2.s, ": ", f(3.0.s, 9.81.m•s⁻²)
 #+end_src
 
 Doing gradients with units? Pretty neat, huh?
+
+You want more?
+What if you have some measurement uncertainties associated with your
+time values? And maybe include the variation of =g= around the world?
+
+#+begin_src nim
+import measuremancer
+# And guess what if you have some measurement errors on top of your
+# measurement?
+echo "Speed after ", 1.s, ": ", f(1.0.s ± 0.05.s, 9.81.m•s⁻² ± 0.03.m•s⁻²)
+echo "Speed after ", 2.s, ": ", f(2.0.s ± 0.05.s, 9.81.m•s⁻² ± 0.03.m•s⁻²)
+echo "Speed after ", 2.s, ": ", f(3.0.s ± 0.05.s, 9.81.m•s⁻² ± 0.03.m•s⁻²)
+# Speed after 1 Second: 9.81 ± 0.491 Meter•Second⁻¹
+# Speed after 2 Second: 19.6 ± 0.494 Meter•Second⁻¹
+# Speed after 2 Second: 29.4 ± 0.499 Meter•Second⁻¹
+#+end_src
+
+Yup.
