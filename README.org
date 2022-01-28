@@ -70,3 +70,23 @@ complex statements are not really the goal of this library. Its aim is
 to provide a convenient way to generate gradients of functions that a)
 one is too lazy to write down or b) that might already be a bit
 annoying to compute by hand.
+
+** Extra fun
+
+Guess what we can do 😎:
+
+#+begin_src nim
+import unchained
+import scinim/experimental/sugar # just used for the mathScope macro
+
+mathScope:
+  f(t, a) = ∂(1.0/2.0 * a * t^2, t)
+echo "Speed after ", 1.s, ": ", f(1.0.s, 9.81.m•s⁻²)
+echo "Speed after ", 2.s, ": ", f(2.0.s, 9.81.m•s⁻²)
+echo "Speed after ", 2.s, ": ", f(3.0.s, 9.81.m•s⁻²)
+# Speed after 1 Second: 9.81 Meter•Second⁻¹
+# Speed after 2 Second: 19.62 Meter•Second⁻¹
+# Speed after 2 Second: 29.43 Meter•Second⁻¹
+#+end_src
+
+Doing gradients with units? Pretty neat, huh?

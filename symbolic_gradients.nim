@@ -540,3 +540,13 @@ when isMainModule:
     ggplot(df, aes("x", "y", color = "grad")) +
       geom_line() +
       ggsave("/tmp/tanh_derivs.pdf")
+
+  import unchained
+  import scinim/experimental/sugar
+
+  # guess what we can do 😎
+  mathScope:
+    f(t, a) = ∂(1.0/2.0 * a * t^2, t)
+  echo "Speed after ", 1.s, ": ", f(1.0.s, 9.81.m•s⁻²)
+  echo "Speed after ", 2.s, ": ", f(2.0.s, 9.81.m•s⁻²)
+  echo "Speed after ", 2.s, ": ", f(3.0.s, 9.81.m•s⁻²)
