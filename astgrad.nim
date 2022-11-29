@@ -451,13 +451,18 @@ macro genHelpers(): untyped =
     result.add quote do:
       template `name`*(`arg`, `wrt`: untyped): untyped =
         `body`
-
 genHelpers()
 
-when isMainModule:
+when false:# isMainModule:
+
+  let x = 1.0
+  echo ∂(exp(-3.0 * x) * x * x * x * sin(x), x)
+
+  let x1 = 1.0
+  echo ∂(1/x^2, x)
+
   let x = 2.5
   echo ∂(x, x)
-
   template printAndCheck(arg, eq: untyped): untyped =
     echo "is ", derivative(arg, x), " should be ", eq
     echo derivative(arg, x), " is ", abs(derivative(arg, x) - eq) < 1e-4
