@@ -1,7 +1,5 @@
 * astGrad - Symbolic differentiation based on the Nim AST
 
-*NOTE*: This name *really* is not final.... :P
-
 This library performs symbolic differentiation based on the nodes of
 the Nim AST. This allows for compile time generation of derivatives to
 avoid approximations due to numerical methods.
